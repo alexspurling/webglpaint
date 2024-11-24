@@ -4,7 +4,7 @@ const canvas = document.getElementById("webglCanvas");
 // canvas.width = window.innerWidth * 0.8;
 // canvas.height = window.innerHeight * 0.8;
 
-const gl = canvas.getContext("webgl2");
+const gl = canvas.getContext("webgl2", { alpha: false });
 if (!gl) {
   alert("WebGL2 is not supported in this browser!");
   throw new Error("WebGL2 not supported.");
@@ -26,7 +26,14 @@ const fragmentShaderSource = `#version 300 es
     uniform vec4 u_color;
     out vec4 outColor;
     void main() {
-        outColor = u_color;
+        // Calculate the distance from the center of the point
+        vec2 coord = gl_PointCoord * 2.0 - 1.0; // Transform from [0, 1] to [-1, 1]
+        float distance = length(coord);
+
+        float alpha = clamp((1.0 - distance) * 10.0, 0.0, 1.0);
+
+        // Otherwise, use the specified color
+        outColor = vec4(u_color.xyz, alpha);
     }`;
 
 // Compile shader function
@@ -85,8 +92,8 @@ gl.clearColor(1.0, 1.0, 1.0, 1.0); // White background
 // gl.clear(gl.COLOR_BUFFER_BIT);
 
 // Enable blending for transparency
-// gl.enable(gl.BLEND);
-// gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
 // Drawing variables
 // let drawing = false;
@@ -154,9 +161,11 @@ function renderFps() {
 }
 
 function updateSineWave(time) {
-  for (let i = 0; i <= numPoints * 2; i+=2) {
-    points[i] = (i / numPoints) * 2 - 1; // Map i to the range [-1, 1]
-    points[i + 1] = amplitude * Math.sin((points[i] + time * 0.1) * frequency * Math.PI * 2); // Calculate sine wave
+  for (let i = 0; i <= numPoints; i++) {
+    const x = (i / numPoints) * 2 - 1; // Map i to the range [-1, 1]
+    const y = amplitude * Math.sin((x + time * 0.1) * frequency * Math.PI * 2);
+    points[i * 2] = x;
+    points[i * 2 + 1] = y;
   }
 }
 
@@ -168,12 +177,13 @@ function render() {
   time += (curTime - lastFrameTime) / 1000;
   lastFrameTime = curTime;
   updateSineWave(time);
+  // const points = new Float32Array([-0.125, 0.125, 0, 0, 0.125, 0.125]);
 
   // Clear the canvas
-  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   // Update buffer data
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  // gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, points, gl.STREAM_DRAW);
 
   // Use the program and draw points
@@ -187,8 +197,8 @@ function render() {
   renderFps();
 
   // Request next frame
-  // requestAnimationFrame(render);
-  setTimeout(render, 10)
+  requestAnimationFrame(render);
+  // setTimeout(render, 10)
 }
 
 // Start rendering
