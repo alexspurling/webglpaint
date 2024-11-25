@@ -1,11 +1,14 @@
-#canvasContainer {
-  position: relative;
-  width: 1080px;
-  height: 600px;
-  margin: auto;
+#main {
+    width: 1080px;
+    height: 600px;
+    margin: auto;
 }
 
-#webglCanvas, #textCanvas {
+#canvasContainer {
+  position: relative;
+}
+
+#textCanvas {
   position: absolute;
   top: 0;
   left: 0;
@@ -16,5 +19,5 @@
 }
 
 body {
-  background: #F8F8F8;
+  background: #F0F0F0;
 }

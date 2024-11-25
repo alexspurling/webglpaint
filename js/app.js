@@ -1,191 +1,338 @@
 
-// Setup WebGL2 context and canvas
 const canvas = document.getElementById("webglCanvas");
-
 const gl = canvas.getContext("webgl2", { alpha: false });
+
 if (!gl) {
-  alert("WebGL2 is not supported in this browser!");
-  throw new Error("WebGL2 not supported.");
+    alert("WebGL2 is not supported on this browser.");
+    throw new Error("WebGL2 not supported.");
 }
 
 const textCanvasCtx = document.getElementById("textCanvas").getContext("2d");
 
-// Vertex shader source
+// Vertex shader for fullscreen quad
 const vertexShaderSource = `#version 300 es
+    precision highp float;
     in vec2 a_position;
+    out vec2 v_uv;
     void main() {
+        v_uv = a_position * 0.5 + 0.5; // Map [-1, 1] to [0, 1]
         gl_Position = vec4(a_position, 0.0, 1.0);
-        gl_PointSize = 15.0; // Adjust size for brush strokes
-    }`;
+    }
+    `;
 
-// Fragment shader source
+// Fragment shader for circles
 const fragmentShaderSource = `#version 300 es
     precision highp float;
-    uniform vec4 u_color;
-    uniform vec2 u_resolution;
-    uniform vec2 u_points[1000]; // Max 100 points
-    uniform int u_numPoints;
-    out vec4 outColor;
-    void main() {
-        vec4 color = vec4(u_color.xyz, 0.0); // Default background color
+    in vec2 v_uv;
+    out vec4 fragColor;
 
-        float circleRadius = 50.0;
-        for (int i = 0; i < 1000; i++) {
-            if (i >= u_numPoints) break;
-            vec2 point = u_points[i];
-            float dist = distance(gl_FragCoord.xy, point);
-            if (dist < circleRadius) {
-                float alpha = smoothstep(circleRadius, circleRadius - 1.0, dist);
-                color = vec4(1.0, 0.0, 0.0, alpha);
+    uniform vec2 u_resolution;
+    // uniform vec2 u_points[100];
+    uniform vec2 u_new_point;
+    uniform int u_numPoints;
+    uniform float u_circleRadius;
+    uniform sampler2D u_prevTexture;
+    uniform sampler2D u_pointTexture;
+    uniform bool u_showSDF;
+
+    float distanceToLine(float width) {
+        vec2 uv = v_uv * u_resolution; // Convert to pixel coordinates
+
+        // First get the distance to the first point on the line
+        vec2 firstPoint = texelFetch(u_pointTexture, ivec2(0, 0), 0).xy;
+        float dist = distance(uv, firstPoint);
+
+        // Then iterate over each line segment
+        for (int i = 0; i < u_numPoints - 1; i++) {
+            vec2 linePoint1 = texelFetch(u_pointTexture, ivec2(i, 0), 0).xy;
+            vec2 linePoint2 = texelFetch(u_pointTexture, ivec2(i + 1, 0), 0).xy;
+
+            vec2 line = linePoint2 - linePoint1;
+            vec2 perp = normalize(vec2(-line.y, line.x));
+            vec2 curPoint = uv - linePoint1;
+            float distFromLine = abs(dot(curPoint, perp)); // shortest distance from point to the line for this line segment
+            float curPointDotPoint1 = dot(curPoint, line);
+            float curPointDotPoint2 = dot(uv - linePoint2, line);
+
+            // Ensure that we are somewhere between the two points of this line segment
+            if (curPointDotPoint1 > 0.0 && curPointDotPoint2 < 0.0 && distFromLine < dist) {
+                dist = distFromLine;
+            }
+
+            float distToEndPoint = distance(uv, linePoint2);
+            if (distToEndPoint < dist) {
+                dist = distToEndPoint;
             }
         }
 
-        // Otherwise, use the specified color
-        outColor = color;
-    }`;
+        return dist - width;
+    }
+
+    void main() {
+        vec4 color = vec4(0.0); // Default background color
+        // vec4 color = texture(u_prevTexture, v_uv);
+
+        float dist = distanceToLine(u_circleRadius);
+        if (dist < 0.0) {
+            float alpha = smoothstep(-2.0, 0.0, dist);
+            color = vec4(0.5, 0.5, 0.9, 1.0 - alpha);
+        }
+        // Distance field as a gradient
+        // color = vec4(mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), dist / 100.0), 1.0);
+
+        if (u_showSDF) {
+            vec3 col = (dist > 0.0) ? vec3(0.9, 0.6, 0.3) : vec3(0.65, 0.85, 1.0);
+            col *= 1.0 - exp(-2.0 * abs(dist));
+            col *= 0.4 + 0.5 * cos(1.0 * dist);
+            col = mix(col, vec3(1.0), 1.0 - smoothstep(0.0, 0.01, abs(dist)));
+            color = vec4(col, 1.0);
+        }
+
+        fragColor = color;
+    }
+    `;
+
+// Fragment shader to display texture
+const displayShaderSource = `#version 300 es
+    precision highp float;
+    in vec2 v_uv;
+    out vec4 fragColor;
+
+    uniform sampler2D u_displayTexture;
+
+    void main() {
+        fragColor = texture(u_displayTexture, v_uv);
+    }
+    `;
 
 // Compile shader function
-function compileShader(gl, type, source) {
-  const shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    console.error("Shader compilation failed:", gl.getShaderInfoLog(shader));
-    gl.deleteShader(shader);
-    return null;
-  }
-
-  return shader;
+function compileShader(gl, source, type) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error("Error compiling shader:", gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+    }
+    return shader;
 }
 
-// Link program function
-function createProgram(gl, vertexShader, fragmentShader) {
-  const program = gl.createProgram();
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
-
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    console.error("Program linking failed:", gl.getProgramInfoLog(program));
-    gl.deleteProgram(program);
-    return null;
-  }
-
-  return program;
+// Create program function
+function createProgram(gl, vertexShaderSource, fragmentShaderSource) {
+    const vertexShader = compileShader(gl, vertexShaderSource, gl.VERTEX_SHADER);
+    const fragmentShader = compileShader(gl, fragmentShaderSource, gl.FRAGMENT_SHADER);
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error("Error linking program:", gl.getProgramInfoLog(program));
+        gl.deleteProgram(program);
+        return null;
+    }
+    return program;
 }
 
-// Create shaders and program
-const vertexShader = compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
-const program = createProgram(gl, vertexShader, fragmentShader);
+// Create shaders and programs
+const circleProgram = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+const displayProgram = createProgram(gl, vertexShaderSource, displayShaderSource);
 
-// Get attribute and uniform locations
-const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
-const colorUniformLocation = gl.getUniformLocation(program, "u_color");
-const resolutionUniformLocation = gl.getUniformLocation(program, "u_resolution");
-const pointsUniformLocation = gl.getUniformLocation(program, "u_points");
-const numPointsUniformLocation = gl.getUniformLocation(program, "u_numPoints");
-
-// Create and bind buffer
-const positionBuffer = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-
-// Setup VAO
+// Fullscreen quad setup
+const quadVertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
 const vao = gl.createVertexArray();
+const vbo = gl.createBuffer();
+
 gl.bindVertexArray(vao);
+gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
 
-gl.enableVertexAttribArray(positionAttributeLocation);
-gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+const aPosition = gl.getAttribLocation(circleProgram, "a_position");
+gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+gl.enableVertexAttribArray(aPosition);
 
-// Set clear color
-gl.clearColor(1.0, 1.0, 1.0, 1.0); // White background
-// gl.clear(gl.COLOR_BUFFER_BIT);
-
+gl.bindVertexArray(null);
 // Enable blending for transparency
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-
-// Variables for the sine wave
-let time = 0; // Time for animation
-const amplitude = 0.8; // Amplitude of the sine wave
-const frequency = 1; // Frequency of the sine wave
-let numPoints = 1; // Number of points in the sine wave
-let points = new Float32Array([100, 100]);
-
-let quad = new Float32Array([-1, 1, 1, 1, -1, -1, 1, -1]);
-// let quad = new Float32Array([-0.5, 0.5, 0.5, 0.5, -0.5, -0.5, 0.5, -0.5]);
+// Uniform locations
+const uResolution = gl.getUniformLocation(circleProgram, "u_resolution");
+const uPoints = gl.getUniformLocation(circleProgram, "u_points");
+const uNewPoint = gl.getUniformLocation(circleProgram, "u_new_point");
+const uNumPoints = gl.getUniformLocation(circleProgram, "u_numPoints");
+const uCircleRadius = gl.getUniformLocation(circleProgram, "u_circleRadius");
+const uShowSDF = gl.getUniformLocation(circleProgram, "u_showSDF");
+const uPrevTexture = gl.getUniformLocation(circleProgram, "u_prevTexture");
+const uPointTexture = gl.getUniformLocation(circleProgram, "u_pointTexture");
+const uDisplayTexture = gl.getUniformLocation(displayProgram, "u_displayTexture");
 
 let frames = 0;
 let lastFpsTime = Date.now();
 
 function renderFps() {
-  let curTime = Date.now();
-  if (curTime - lastFpsTime >= 1000) {
-    lastFpsTime = curTime;
-    textCanvasCtx.clearRect(0, 0, textCanvasCtx.canvas.width, textCanvasCtx.canvas.height);
-    textCanvasCtx.fillText("FPS: " + frames, 20, 20);
-    textCanvasCtx.fillText("Points: " + points.length / 2, 20, 40);
-    frames = 0;
-  }
-  frames += 1;
+    let curTime = Date.now();
+    if (curTime - lastFpsTime >= 1000) {
+        lastFpsTime = curTime;
+        textCanvasCtx.clearRect(0, 0, textCanvasCtx.canvas.width, textCanvasCtx.canvas.height);
+        textCanvasCtx.font = "12px Verdana";
+        textCanvasCtx.fillText("FPS: " + frames, 10, 20);
+        textCanvasCtx.fillText("Points: " + points.length, 10, 40);
+        frames = 0;
+    }
+    frames += 1;
 }
 
-function updateSineWave(time) {
-  for (let i = 0; i <= numPoints; i++) {
-    const x = (i / numPoints) * 2 - 1; // Map i to the range [-1, 1]
-    const y = amplitude * Math.sin((x + time * 0.1) * frequency * Math.PI * 2);
-    points[i * 2] = x;
-    points[i * 2 + 1] = y;
-  }
+// Set initial uniform values
+const points = [
+    [200, 300],
+    [400, 500],
+    [600, 400],
+    [800, 500],
+];
+let pointsRendered = 0;
+let newPoint = [400, 500];
+let redraw = true;
+let showSDF = false;
+
+// Create two textures
+const textures = [];
+const framebuffers = [];
+
+for (let i = 0; i < 2; i++) {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    textures.push(texture);
+
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    framebuffers.push(framebuffer);
 }
 
-let lastFrameTime = Date.now();
+const pointTexture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, pointTexture);
+gl.texImage2D(gl.TEXTURE_2D, 0,
+    gl.RG32F,               // 2-component (x, y) float format
+    4096,                   // Width
+    1,                      // Height (single row)
+    0,                      // Border
+    gl.RG,                  // Format
+    gl.FLOAT,               // Data type
+    null                    // Data
+);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+// gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null); // Ensure no unpack buffer is active
 
-// Animation loop
+// Ensure everything is unbound
+gl.bindTexture(gl.TEXTURE_2D, null);
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+// Update renderToTexture to use ping-pong
+let readIndex = 0;
+
+function renderToTexture() {
+    const writeIndex = 1 - readIndex;
+
+    // Bind the framebuffer for writing
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[writeIndex]);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Use the circle program for rendering
+    gl.useProgram(circleProgram);
+
+    // Bind the input texture (from the other framebuffer)
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, textures[readIndex]);
+    gl.uniform1i(uPrevTexture, 0);
+
+    // gl.uniform2f(uPoints, points.flat());
+    gl.uniform2f(uNewPoint, newPoint[0], newPoint[1]);
+    gl.uniform1i(uNumPoints, points.length);
+    gl.uniform1f(uCircleRadius, 15.0);
+    gl.uniform2f(uResolution, canvas.width, canvas.height);
+    gl.uniform1i(uShowSDF, showSDF);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, pointTexture);
+
+    const pointsFloatArray = new Float32Array(points.slice(pointsRendered).flat());
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, pointsRendered / 2, 0, pointsFloatArray.length / 2, 1, gl.RG, gl.FLOAT, pointsFloatArray);
+    gl.uniform1i(uPointTexture, 1);
+
+    // Draw to the framebuffer
+    gl.bindVertexArray(vao);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+
+    // Swap the read/write textures
+    readIndex = writeIndex;
+
+    // Unbind the framebuffer
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+// Update the renderToScreen function to always use the current read texture
+function renderToScreen() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(displayProgram);
+
+    // Bind the texture to display
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, textures[readIndex]);
+    gl.uniform1i(uDisplayTexture, 0);
+
+    gl.bindVertexArray(vao);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+}
+
+// Main render loop
 function render() {
-  const curTime = Date.now();
-  time += (curTime - lastFrameTime) / 1000;
-  lastFrameTime = curTime;
-  // updateSineWave(time);
-  // const points = new Float32Array([-0.125, 0.125, 0, 0, 0.125, 0.125]);
+    if (redraw) {
+        renderToTexture();
+        redraw = true;
+    }
+    renderToScreen();
+    renderFps();
+    requestAnimationFrame(render);
+    // setTimeout(render, 16);
+}
 
-  // Clear the canvas
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-  // Update buffer data
-  // gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
-
-  // Use the program and draw points
-  gl.useProgram(program);
-  gl.bindVertexArray(vao);
-
-  // Set wave color
-  gl.uniform4f(colorUniformLocation, 0.2, 0.6, 0.8, 1.0); // Blue color
-  gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
-  gl.uniform2fv(pointsUniformLocation, points);
-  gl.uniform1i(numPointsUniformLocation, points.length / 2);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, quad.length / 2);
-
-  renderFps();
-
-  // Request next frame
-  // requestAnimationFrame(render);
-  setTimeout(render, 10)
+function addPoint(e) {
+    const rect = e.target.getBoundingClientRect();
+    const x = e.clientX - rect.left; //x position within the element.
+    const y = canvas.height - (e.clientY - rect.top);  //y position within the element.
+    if (Math.abs(x - newPoint[0]) > 2 || Math.abs(y - newPoint[1]) > 2) {
+        newPoint = [x, y];
+        points.push(newPoint);
+        redraw = true;
+    }
 }
 
 canvas.addEventListener("mousemove", (e) => {
-  if (e.buttons == 1 && (e.movementX != 0 || e.movementY != 0)) {
-    numPoints += 1;
-    const newArray = new Float32Array(numPoints * 2);
-    newArray.set(points);
-    newArray[(numPoints * 2) - 2] = e.layerX;
-    newArray[(numPoints * 2) - 1] = canvas.height - e.layerY;
-    points = newArray;
-  }
+    if (e.buttons === 1 && (e.movementX !== 0 || e.movementY !== 0)) {
+        addPoint(e);
+    }
 });
 
-// Start rendering
+canvas.addEventListener("mousedown", (e) => {
+    if (e.buttons === 1) {
+        addPoint(e);
+    }
+});
+
+function toggleShowSDF() {
+    showSDF = !showSDF;
+};
+
 render();
