@@ -1,8 +1,6 @@
 
 // Setup WebGL2 context and canvas
 const canvas = document.getElementById("webglCanvas");
-// canvas.width = window.innerWidth * 0.8;
-// canvas.height = window.innerHeight * 0.8;
 
 const gl = canvas.getContext("webgl2", { alpha: false });
 if (!gl) {
@@ -24,16 +22,26 @@ const vertexShaderSource = `#version 300 es
 const fragmentShaderSource = `#version 300 es
     precision highp float;
     uniform vec4 u_color;
+    uniform vec2 u_resolution;
+    uniform vec2 u_points[1000]; // Max 100 points
+    uniform int u_numPoints;
     out vec4 outColor;
     void main() {
-        // Calculate the distance from the center of the point
-        vec2 coord = gl_PointCoord * 2.0 - 1.0; // Transform from [0, 1] to [-1, 1]
-        float distance = length(coord);
+        vec4 color = vec4(u_color.xyz, 0.0); // Default background color
 
-        float alpha = clamp((1.0 - distance) * 10.0, 0.0, 1.0);
+        float circleRadius = 50.0;
+        for (int i = 0; i < 1000; i++) {
+            if (i >= u_numPoints) break;
+            vec2 point = u_points[i];
+            float dist = length(gl_FragCoord.xy - point);
+            if (dist < circleRadius) {
+                float alpha = smoothstep(circleRadius, circleRadius - 1.0, dist);
+                color = vec4(1.0, 0.0, 0.0, alpha);
+            }
+        }
 
         // Otherwise, use the specified color
-        outColor = vec4(u_color.xyz, alpha);
+        outColor = color;
     }`;
 
 // Compile shader function
@@ -75,6 +83,9 @@ const program = createProgram(gl, vertexShader, fragmentShader);
 // Get attribute and uniform locations
 const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
 const colorUniformLocation = gl.getUniformLocation(program, "u_color");
+const resolutionUniformLocation = gl.getUniformLocation(program, "u_resolution");
+const pointsUniformLocation = gl.getUniformLocation(program, "u_points");
+const numPointsUniformLocation = gl.getUniformLocation(program, "u_numPoints");
 
 // Create and bind buffer
 const positionBuffer = gl.createBuffer();
@@ -100,8 +111,11 @@ gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 let time = 0; // Time for animation
 const amplitude = 0.8; // Amplitude of the sine wave
 const frequency = 1; // Frequency of the sine wave
-let numPoints = 0; // Number of points in the sine wave
-let points = new Float32Array(0);
+let numPoints = 1; // Number of points in the sine wave
+let points = new Float32Array([100, 100]);
+
+let quad = new Float32Array([-1, 1, 1, 1, -1, -1, 1, -1]);
+// let quad = new Float32Array([-0.5, 0.5, 0.5, 0.5, -0.5, -0.5, 0.5, -0.5]);
 
 let frames = 0;
 let lastFpsTime = Date.now();
@@ -112,7 +126,7 @@ function renderFps() {
     lastFpsTime = curTime;
     textCanvasCtx.clearRect(0, 0, textCanvasCtx.canvas.width, textCanvasCtx.canvas.height);
     textCanvasCtx.fillText("FPS: " + frames, 20, 20);
-    textCanvasCtx.fillText("Points: " + points.length, 20, 40);
+    textCanvasCtx.fillText("Points: " + points.length / 2, 20, 40);
     frames = 0;
   }
   frames += 1;
@@ -142,7 +156,7 @@ function render() {
 
   // Update buffer data
   // gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, points, gl.DYNAMIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
 
   // Use the program and draw points
   gl.useProgram(program);
@@ -150,13 +164,16 @@ function render() {
 
   // Set wave color
   gl.uniform4f(colorUniformLocation, 0.2, 0.6, 0.8, 1.0); // Blue color
-  gl.drawArrays(gl.POINTS, 0, points.length / 2);
+  gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
+  gl.uniform2fv(pointsUniformLocation, points);
+  gl.uniform1i(numPointsUniformLocation, points.length / 2);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, quad.length / 2);
 
   renderFps();
 
   // Request next frame
-  requestAnimationFrame(render);
-  // setTimeout(render, 10)
+  // requestAnimationFrame(render);
+  setTimeout(render, 10)
 }
 
 canvas.addEventListener("mousemove", (e) => {
@@ -164,8 +181,8 @@ canvas.addEventListener("mousemove", (e) => {
     numPoints += 1;
     const newArray = new Float32Array(numPoints * 2);
     newArray.set(points);
-    newArray[(numPoints * 2) - 2] = e.layerX / 540 - 1;
-    newArray[(numPoints * 2) - 1] = (600 - e.layerY) / 300 - 1;
+    newArray[(numPoints * 2) - 2] = e.layerX;
+    newArray[(numPoints * 2) - 1] = canvas.height - e.layerY;
     points = newArray;
   }
 });
