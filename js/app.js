@@ -35,7 +35,7 @@ const fragmentShaderSource = `#version 300 es
     uniform sampler2D u_pointTexture;
     uniform bool u_showSDF;
 
-    float distanceToLine(float width) {
+    float distanceToLine() {
         vec2 uv = v_uv * u_resolution; // Convert to pixel coordinates
 
         // First get the distance to the first point on the line
@@ -65,23 +65,24 @@ const fragmentShaderSource = `#version 300 es
             }
         }
 
-        return dist - width;
+        return dist;
     }
 
     void main() {
         vec4 color = vec4(0.0); // Default background color
         // vec4 color = texture(u_prevTexture, v_uv);
 
-        float dist = distanceToLine(u_circleRadius);
-        if (dist < 0.0) {
-            float alpha = smoothstep(-2.0, 0.0, dist);
-            color = vec4(0.5, 0.5, 0.9, 1.0 - alpha);
+        float dist = distanceToLine();
+        if (dist < u_circleRadius) {
+            float alpha = smoothstep(u_circleRadius, u_circleRadius - 2.0, dist);
+            // float alpha = 1.0 - (dist / u_circleRadius);
+            color = vec4(0.8, 0.9, 1.0, alpha);
         }
         // Distance field as a gradient
         // color = vec4(mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), dist / 100.0), 1.0);
 
         if (u_showSDF) {
-            vec3 col = (dist > 0.0) ? vec3(0.9, 0.6, 0.3) : vec3(0.65, 0.85, 1.0);
+            vec3 col = (dist > u_circleRadius) ? vec3(0.9, 0.6, 0.3) : vec3(0.65, 0.85, 1.0);
             col *= 1.0 - exp(-2.0 * abs(dist));
             col *= 0.4 + 0.5 * cos(1.0 * dist);
             col = mix(col, vec3(1.0), 1.0 - smoothstep(0.0, 0.01, abs(dist)));
@@ -241,7 +242,8 @@ function renderToTexture() {
     // Bind the framebuffer for writing
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[writeIndex]);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue
+    // gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue
+    gl.clearColor(1.0, 1.0, 1.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     // Use the circle program for rendering
