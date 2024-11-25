@@ -33,7 +33,7 @@ const fragmentShaderSource = `#version 300 es
         for (int i = 0; i < 1000; i++) {
             if (i >= u_numPoints) break;
             vec2 point = u_points[i];
-            float dist = length(gl_FragCoord.xy - point);
+            float dist = distance(gl_FragCoord.xy, point);
             if (dist < circleRadius) {
                 float alpha = smoothstep(circleRadius, circleRadius - 1.0, dist);
                 color = vec4(1.0, 0.0, 0.0, alpha);
