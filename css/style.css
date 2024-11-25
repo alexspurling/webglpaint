@@ -11,6 +11,10 @@
   left: 0;
 }
 
+#textCanvas {
+  pointer-events: none;
+}
+
 body {
   background: #F8F8F8;
 }
