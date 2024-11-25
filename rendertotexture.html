@@ -1,27 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebGL2 Render to Texture</title>
-  <link rel="stylesheet" href="css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL2 Render to Texture</title>
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <canvas id="glCanvas" width="1000" height="600"></canvas>
 <canvas id="textCanvas" width="350" height="100"></canvas>
 <script>
-  const canvas = document.getElementById("glCanvas");
-  const gl = canvas.getContext("webgl2");
+    const canvas = document.getElementById("glCanvas");
+    const gl = canvas.getContext("webgl2");
 
-  if (!gl) {
-    alert("WebGL2 is not supported on this browser.");
-    throw new Error("WebGL2 not supported.");
-  }
+    if (!gl) {
+        alert("WebGL2 is not supported on this browser.");
+        throw new Error("WebGL2 not supported.");
+    }
 
-  const textCanvasCtx = document.getElementById("textCanvas").getContext("2d");
+    const textCanvasCtx = document.getElementById("textCanvas").getContext("2d");
 
-  // Vertex shader for fullscreen quad
-  const vertexShaderSource = `#version 300 es
+    // Vertex shader for fullscreen quad
+    const vertexShaderSource = `#version 300 es
     precision highp float;
     in vec2 a_position;
     out vec2 v_uv;
@@ -31,197 +31,292 @@
     }
     `;
 
-  // Fragment shader for circles
-  const fragmentShaderSource = `#version 300 es
+    // Fragment shader for circles
+    const fragmentShaderSource = `#version 300 es
     precision highp float;
     in vec2 v_uv;
     out vec4 fragColor;
 
     uniform vec2 u_resolution;
-    uniform vec2 u_points[100];
+    // uniform vec2 u_points[100];
+    uniform vec2 u_new_point;
     uniform int u_numPoints;
     uniform float u_circleRadius;
+    uniform sampler2D u_prevTexture;
+    uniform sampler2D u_pointTexture;
 
     void main() {
+        // vec4 color = vec4(0.0); // Default background color
+        vec4 color = texture(u_prevTexture, v_uv);
         vec2 uv = v_uv * u_resolution; // Convert to pixel coordinates
-        vec4 color = vec4(0.0); // Default background color
 
-        for (int i = 0; i < 100; i++) {
-            if (i >= u_numPoints) break;
-            vec2 point = u_points[i];
-            float dist = distance(uv, point);
-            if (dist < u_circleRadius) {
-                float alpha = smoothstep(u_circleRadius, u_circleRadius - 1.0, dist);
-                color += vec4(1.0, 0.0, 0.0, alpha); // Red circles with fade
-            }
+        for (int i = 0; i < 4; i++) {
+          vec2 point = texelFetch(u_pointTexture, ivec2(i, 0), 0).xy;
+          float dist = length(uv - (point + vec2(i, i)));
+          if (dist < u_circleRadius) {
+              float alpha = smoothstep(u_circleRadius, u_circleRadius - 1.0, dist);
+              color += vec4(1.0, 0.0, 1.0, alpha);
+          }
+        }
+
+        float dist = length(uv - u_new_point);
+        if (dist < u_circleRadius) {
+            float alpha = smoothstep(u_circleRadius, u_circleRadius - 1.0, dist);
+            color += vec4(1.0, 0.0, 0.0, alpha); // Red circles with fade
         }
 
         fragColor = color;
     }
     `;
 
-  // Fragment shader to display texture
-  const displayShaderSource = `#version 300 es
+    // Fragment shader to display texture
+    const displayShaderSource = `#version 300 es
     precision highp float;
     in vec2 v_uv;
     out vec4 fragColor;
 
-    uniform sampler2D u_texture;
+    uniform sampler2D u_displayTexture;
 
     void main() {
-        fragColor = texture(u_texture, v_uv);
+        fragColor = texture(u_displayTexture, v_uv);
     }
     `;
 
-  // Compile shader function
-  function compileShader(gl, source, type) {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      console.error("Error compiling shader:", gl.getShaderInfoLog(shader));
-      gl.deleteShader(shader);
-      return null;
+    // Compile shader function
+    function compileShader(gl, source, type) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error("Error compiling shader:", gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        return shader;
     }
-    return shader;
-  }
 
-  // Create program function
-  function createProgram(gl, vertexShaderSource, fragmentShaderSource) {
-    const vertexShader = compileShader(gl, vertexShaderSource, gl.VERTEX_SHADER);
-    const fragmentShader = compileShader(gl, fragmentShaderSource, gl.FRAGMENT_SHADER);
-    const program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.error("Error linking program:", gl.getProgramInfoLog(program));
-      gl.deleteProgram(program);
-      return null;
+    // Create program function
+    function createProgram(gl, vertexShaderSource, fragmentShaderSource) {
+        const vertexShader = compileShader(gl, vertexShaderSource, gl.VERTEX_SHADER);
+        const fragmentShader = compileShader(gl, fragmentShaderSource, gl.FRAGMENT_SHADER);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error("Error linking program:", gl.getProgramInfoLog(program));
+            gl.deleteProgram(program);
+            return null;
+        }
+        return program;
     }
-    return program;
-  }
 
-  // Create shaders and programs
-  const circleProgram = createProgram(gl, vertexShaderSource, fragmentShaderSource);
-  const displayProgram = createProgram(gl, vertexShaderSource, displayShaderSource);
+    // Create shaders and programs
+    const circleProgram = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+    const displayProgram = createProgram(gl, vertexShaderSource, displayShaderSource);
 
-  // Fullscreen quad setup
-  const quadVertices = new Float32Array([
-    -1, -1,
-    1, -1,
-    -1,  1,
-    1,  1,
-  ]);
-  const vao = gl.createVertexArray();
-  const vbo = gl.createBuffer();
+    // Fullscreen quad setup
+    const quadVertices = new Float32Array([
+        -1, -1,
+        1, -1,
+        -1, 1,
+        1, 1,
+    ]);
+    const vao = gl.createVertexArray();
+    const vbo = gl.createBuffer();
 
-  gl.bindVertexArray(vao);
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
-
-  const aPosition = gl.getAttribLocation(circleProgram, "a_position");
-  gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
-  gl.enableVertexAttribArray(aPosition);
-
-  gl.bindVertexArray(null);
-
-  // Create texture to render to
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.bindTexture(gl.TEXTURE_2D, null);
-
-  // Create framebuffer
-  const framebuffer = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-  // Uniform locations
-  const uResolution = gl.getUniformLocation(circleProgram, "u_resolution");
-  const uPoints = gl.getUniformLocation(circleProgram, "u_points");
-  const uNumPoints = gl.getUniformLocation(circleProgram, "u_numPoints");
-  const uCircleRadius = gl.getUniformLocation(circleProgram, "u_circleRadius");
-  const uTexture = gl.getUniformLocation(displayProgram, "u_texture");
-
-  let frames = 0;
-  let lastFpsTime = Date.now();
-
-  function renderFps() {
-    let curTime = Date.now();
-    if (curTime - lastFpsTime >= 1000) {
-      lastFpsTime = curTime;
-      textCanvasCtx.clearRect(0, 0, textCanvasCtx.canvas.width, textCanvasCtx.canvas.height);
-      textCanvasCtx.fillText("FPS: " + frames, 20, 20);
-      textCanvasCtx.fillText("Points: " + points.length, 20, 40);
-      frames = 0;
-    }
-    frames += 1;
-  }
-
-  // Set initial uniform values
-  const points = [
-    [200, 300],
-    [400, 500],
-    [600, 200],
-  ];
-  let pointsRendered = 0;
-
-  // Render to texture
-  function renderToTexture() {
-
-    gl.useProgram(circleProgram);
-    gl.uniform2fv(uPoints, points.flat());
-    gl.uniform1i(uNumPoints, points.length);
-    gl.uniform1f(uCircleRadius, 50.0);
-    gl.uniform2f(uResolution, canvas.width, canvas.height);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(circleProgram);
     gl.bindVertexArray(vao);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
+
+    const aPosition = gl.getAttribLocation(circleProgram, "a_position");
+    gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(aPosition);
+
     gl.bindVertexArray(null);
+    // Enable blending for transparency
+    // gl.enable(gl.BLEND);
+    // gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    // Create texture to render to
+    // const texture = gl.createTexture();
+    // gl.bindTexture(gl.TEXTURE_2D, texture);
+    // gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // gl.bindTexture(gl.TEXTURE_2D, null);
+    //
+    // // Some other texture to read from
+    // const texture2 = gl.createTexture();
+    // gl.bindTexture(gl.TEXTURE_2D, texture2);
+    // gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // gl.bindTexture(gl.TEXTURE_2D, null);
+
+    // Create framebuffer
+    // const framebuffer = gl.createFramebuffer();
+    // gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    // gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    // gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // Uniform locations
+    const uResolution = gl.getUniformLocation(circleProgram, "u_resolution");
+    const uPoints = gl.getUniformLocation(circleProgram, "u_points");
+    const uNewPoint = gl.getUniformLocation(circleProgram, "u_new_point");
+    const uNumPoints = gl.getUniformLocation(circleProgram, "u_numPoints");
+    const uCircleRadius = gl.getUniformLocation(circleProgram, "u_circleRadius");
+    const uPrevTexture = gl.getUniformLocation(circleProgram, "u_prevTexture");
+    const uPointTexture = gl.getUniformLocation(circleProgram, "u_pointTexture");
+    const uDisplayTexture = gl.getUniformLocation(displayProgram, "u_displayTexture");
+
+    let frames = 0;
+    let lastFpsTime = Date.now();
+
+    function renderFps() {
+        let curTime = Date.now();
+        if (curTime - lastFpsTime >= 1000) {
+            lastFpsTime = curTime;
+            textCanvasCtx.clearRect(0, 0, textCanvasCtx.canvas.width, textCanvasCtx.canvas.height);
+            textCanvasCtx.fillText("FPS: " + frames, 20, 20);
+            textCanvasCtx.fillText("Points: " + points.length, 20, 40);
+            frames = 0;
+        }
+        frames += 1;
+    }
+
+    // Set initial uniform values
+    const points = [
+        [200, 300],
+        [400, 500],
+        [600, 200],
+    ];
+    let pointsRendered = 0;
+    let newPoint = [400, 500];
+    let redraw = true;
+
+    // Create two textures
+    const textures = [];
+    const framebuffers = [];
+
+    for (let i = 0; i < 2; i++) {
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        textures.push(texture);
+
+        const framebuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        framebuffers.push(framebuffer);
+    }
+
+    const pointTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, pointTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0,
+        gl.RG32F,                // 2-component (x, y) float format
+        4,                      // Width
+        1,                      // Height (single row)
+        0,                      // Border
+        gl.RG,                  // Format
+        gl.FLOAT,               // Data type
+        new Float32Array([100, 200, 300, 300, 400, 400, 500, 500])                    // Data
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    // gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null); // Ensure no unpack buffer is active
+    // gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, 1, gl.RG, gl.FLOAT, )
+
+    // Ensure everything is unbound
+    gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  }
 
-  // Render texture to screen
-  function renderToScreen() {
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(displayProgram);
-    gl.bindVertexArray(vao);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.uniform1i(uTexture, 0);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    gl.bindVertexArray(null);
-  }
+    // Update renderToTexture to use ping-pong
+    let readIndex = 0;
 
-  // Main render loop
-  function render() {
-    if (pointsRendered < points.length) {
-      renderToTexture();
-      pointsRendered = points.length;
+    function renderToTexture() {
+        const writeIndex = 1 - readIndex;
+
+        // Bind the framebuffer for writing
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[writeIndex]);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // Use the circle program for rendering
+        gl.useProgram(circleProgram);
+
+        // Bind the input texture (from the other framebuffer)
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, textures[readIndex]);
+        gl.uniform1i(uPrevTexture, 0);
+
+        // gl.uniform2f(uPoints, points.flat());
+        gl.uniform2f(uNewPoint, newPoint[0], newPoint[1]);
+        gl.uniform1i(uNumPoints, points.length);
+        gl.uniform1f(uCircleRadius, 10.0);
+        gl.uniform2f(uResolution, canvas.width, canvas.height);
+
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, pointTexture);
+        gl.uniform1i(uPointTexture, 1);
+
+        // Draw to the framebuffer
+        gl.bindVertexArray(vao);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindVertexArray(null);
+
+        // Swap the read/write textures
+        readIndex = writeIndex;
+
+        // Unbind the framebuffer
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
-    renderToScreen();
-    renderFps();
-    requestAnimationFrame(render);
-  }
 
-  canvas.addEventListener("mousedown", (e) => {
-    if (e.buttons == 1) {
-      points.push([e.layerX, canvas.height - e.layerY]);
+    // Update the renderToScreen function to always use the current read texture
+    function renderToScreen() {
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.useProgram(displayProgram);
+
+        // Bind the texture to display
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, textures[readIndex]);
+        gl.uniform1i(uDisplayTexture, 0);
+
+        gl.bindVertexArray(vao);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindVertexArray(null);
     }
-  });
 
-  render();
+    // Main render loop
+    function render() {
+        if (redraw) {
+            renderToTexture();
+            redraw = false;
+        }
+        renderToScreen();
+        renderFps();
+        requestAnimationFrame(render);
+        // setTimeout(render, 16);
+    }
+
+    canvas.addEventListener("mousemove", (e) => {
+        if (e.buttons === 1 && (e.movementX !== 0 || e.movementY !== 0)) {
+            // points.push();
+            const rect = e.target.getBoundingClientRect();
+            const x = e.clientX - rect.left; //x position within the element.
+            const y = e.clientY - rect.top;  //y position within the element.
+            newPoint = [x, canvas.height - y];
+            redraw = true;
+        }
+    });
+
+    render();
 </script>
 </body>
 </html>
