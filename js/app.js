@@ -34,35 +34,39 @@ const fragmentShaderSource = `#version 300 es
     uniform sampler2D u_prevTexture;
     uniform sampler2D u_pointTexture;
     uniform bool u_showSDF;
+    uniform bool u_usePrevTexture;
+    uniform int u_startPointIdx;
+    uniform float u_time;
 
-    float distanceToLine() {
-        vec2 uv = v_uv * u_resolution; // Convert to pixel coordinates
+    float distanceToLineSegment(vec2 uv, vec2 linePoint1, vec2 linePoint2) {
+        vec2 line = linePoint2 - linePoint1;
+        vec2 perp = normalize(vec2(-line.y, line.x));
+        vec2 curPoint = uv - linePoint1;
+        float distFromLine = abs(dot(curPoint, perp)); // shortest distance from point to the line for this line segment
+        float curPointDotPoint1 = dot(curPoint, line);
+        float curPointDotPoint2 = dot(uv - linePoint2, line);
+
+        float dist = distance(uv, linePoint2);
+
+        // Ensure that we are somewhere between the two points of this line segment
+        if (distFromLine < dist && curPointDotPoint1 > 0.0 && curPointDotPoint2 < 0.0) {
+            dist = distFromLine;
+        }
+
+        return dist;
+    }
+
+    float distanceToLine(vec2 uv, int startIndex) {
 
         // First get the distance to the first point on the line
-        vec2 firstPoint = texelFetch(u_pointTexture, ivec2(0, 0), 0).xy;
+        vec2 firstPoint = texelFetch(u_pointTexture, ivec2(startIndex, 0), 0).xy;
         float dist = distance(uv, firstPoint);
 
         // Then iterate over each line segment
-        for (int i = 0; i < u_numPoints - 1; i++) {
+        for (int i = startIndex; i < u_numPoints - 1; i++) {
             vec2 linePoint1 = texelFetch(u_pointTexture, ivec2(i, 0), 0).xy;
             vec2 linePoint2 = texelFetch(u_pointTexture, ivec2(i + 1, 0), 0).xy;
-
-            vec2 line = linePoint2 - linePoint1;
-            vec2 perp = normalize(vec2(-line.y, line.x));
-            vec2 curPoint = uv - linePoint1;
-            float distFromLine = abs(dot(curPoint, perp)); // shortest distance from point to the line for this line segment
-            float curPointDotPoint1 = dot(curPoint, line);
-            float curPointDotPoint2 = dot(uv - linePoint2, line);
-
-            // Ensure that we are somewhere between the two points of this line segment
-            if (curPointDotPoint1 > 0.0 && curPointDotPoint2 < 0.0 && distFromLine < dist) {
-                dist = distFromLine;
-            }
-
-            float distToEndPoint = distance(uv, linePoint2);
-            if (distToEndPoint < dist) {
-                dist = distToEndPoint;
-            }
+            dist = min(dist, distanceToLineSegment(uv, linePoint1, linePoint2));
         }
 
         return dist;
@@ -70,14 +74,29 @@ const fragmentShaderSource = `#version 300 es
 
     void main() {
         vec4 color = vec4(0.0); // Default background color
-        // vec4 color = texture(u_prevTexture, v_uv);
+        vec2 uv = v_uv * u_resolution; // Convert to pixel coordinates
 
-        float dist = distanceToLine();
+        vec3 lineColor = mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), (1.0 + cos(u_time)) / 2.0);
+
+        int startPointIdx = 0;
+
+        // Most points have already been drawn onto the the texture. We only need to start drawing
+        // from the provided index
+        if (u_usePrevTexture) {
+            color = texture(u_prevTexture, v_uv);
+            startPointIdx = u_startPointIdx;
+        }
+
+        float dist = distanceToLine(uv, startPointIdx);
         if (dist < u_circleRadius) {
             // float alpha = smoothstep(u_circleRadius, u_circleRadius - 1.0, dist);
             // float alpha = 1.0 - (dist / u_circleRadius);
             float alpha = 1.0 - (dist - u_circleRadius + 1.0) / 1.0; // Simple linear anti-aliasing function
-            color = vec4(0.2, 0.4, 1.0, alpha);
+            // color = vec4(0.2, 0.4, 1.0, alpha);
+
+            vec3 blendedRGB = mix(color.rgb, vec3(0.2, 0.4, 1.0), alpha);
+            float blendedAlpha = alpha + color.a * (1.0 - alpha);
+            color = vec4(lineColor, alpha);
         }
         // Distance field as a gradient
         // color = vec4(mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), dist / 100.0), 1.0);
@@ -165,6 +184,9 @@ const uNewPoint = gl.getUniformLocation(circleProgram, "u_new_point");
 const uNumPoints = gl.getUniformLocation(circleProgram, "u_numPoints");
 const uCircleRadius = gl.getUniformLocation(circleProgram, "u_circleRadius");
 const uShowSDF = gl.getUniformLocation(circleProgram, "u_showSDF");
+const uUsePrevTexture = gl.getUniformLocation(circleProgram, "u_usePrevTexture");
+const uStartPointIdx = gl.getUniformLocation(circleProgram, "u_startPointIdx");
+const uTime = gl.getUniformLocation(circleProgram, "u_time");
 const uPrevTexture = gl.getUniformLocation(circleProgram, "u_prevTexture");
 const uPointTexture = gl.getUniformLocation(circleProgram, "u_pointTexture");
 const uDisplayTexture = gl.getUniformLocation(displayProgram, "u_displayTexture");
@@ -195,11 +217,13 @@ const points = [
     [600, 400],
     [800, 500],
 ];
-let pointsRendered = 0;
+let numPointsRendered = 0;
 let newPoint = [400, 500];
 let redraw = true;
 let showSDF = false;
 let renderToTextureFlag = false;
+let renderFromTextureFlag = false;
+let cycleLineColor = false;
 let backgroundColor = [0.85, 0.9, 1.0, 1.0]; // Light blue
 
 // Create two textures
@@ -266,14 +290,24 @@ function renderToTexture() {
     gl.uniform1f(uCircleRadius, 10.0);
     gl.uniform2f(uResolution, canvas.width, canvas.height);
     gl.uniform1i(uShowSDF, showSDF);
+    gl.uniform1i(uUsePrevTexture, renderFromTextureFlag);
+    if (cycleLineColor) {
+        gl.uniform1f(uTime, (Date.now() * 0.005) % (2 * Math.PI));
+    }
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, pointTexture);
 
     // Store the points to render in a texture
-    const pointsFloatArray = new Float32Array(points.slice(pointsRendered).flat());
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, pointsRendered / 2, 0, pointsFloatArray.length / 2, 1, gl.RG, gl.FLOAT, pointsFloatArray);
+    const pointsFloatArray = new Float32Array(points.slice(numPointsRendered).flat());
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, numPointsRendered, 0, pointsFloatArray.length / 2, 1, gl.RG, gl.FLOAT, pointsFloatArray);
     gl.uniform1i(uPointTexture, 1);
+    // We need to subtract 1 from the start index because drawing the next line segment will require re-using the
+    // previously added point
+    gl.uniform1i(uStartPointIdx, Math.max(0, numPointsRendered - 1));
+    // console.log("Drawing " + pointsFloatArray.length / 2 + " points starting at idx " + Math.max(0, numPointsRendered - 1));
+
+    numPointsRendered = points.length;
 
     // Draw to the framebuffer
     gl.bindVertexArray(vao);
@@ -352,6 +386,12 @@ function toggleRenderToTexture() {
 
 function toggleRenderFromTexture() {
     renderFromTextureFlag = !renderFromTextureFlag;
+    redraw = true;
+};
+
+function toggleCycleLineColor() {
+    cycleLineColor = !cycleLineColor;
+    redraw = true;
 };
 
 function changeBackground() {
