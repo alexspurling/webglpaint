@@ -27,15 +27,12 @@ const fragmentShaderSource = `#version 300 es
     out vec4 fragColor;
 
     uniform vec2 u_resolution;
-    // uniform vec2 u_points[100];
-    uniform vec2 u_new_point;
     uniform int u_numPoints;
     uniform float u_circleRadius;
     uniform sampler2D u_prevTexture;
     uniform sampler2D u_pointTexture;
     uniform bool u_showSDF;
     uniform bool u_usePrevTexture;
-    uniform int u_startPointIdx;
     uniform float u_time;
 
     vec4 normalBlend(vec4 color1, vec4 color2) {
@@ -66,14 +63,14 @@ const fragmentShaderSource = `#version 300 es
         return dist;
     }
 
-    float distanceToLine(vec2 uv, int startIndex) {
+    float distanceToLine(vec2 uv) {
 
         // First get the distance to the first point on the line
-        vec2 firstPoint = texelFetch(u_pointTexture, ivec2(startIndex, 0), 0).xy;
+        vec2 firstPoint = texelFetch(u_pointTexture, ivec2(0, 0), 0).xy;
         float dist = distance(uv, firstPoint);
 
         // Then iterate over each line segment
-        for (int i = startIndex; i < u_numPoints - 1; i++) {
+        for (int i = 0; i < u_numPoints - 1; i++) {
             vec2 linePoint1 = texelFetch(u_pointTexture, ivec2(i, 0), 0).xy;
             vec2 linePoint2 = texelFetch(u_pointTexture, ivec2(i + 1, 0), 0).xy;
             dist = min(dist, distanceToLineSegment(uv, linePoint1, linePoint2));
@@ -83,24 +80,16 @@ const fragmentShaderSource = `#version 300 es
     }
 
     void main() {
-        vec4 color = vec4(0.0); // Default background color
         vec2 uv = v_uv * u_resolution; // Convert to pixel coordinates
+
+        vec4 color = vec4(0.0); // Default background color
+        if (u_usePrevTexture) {
+            color = texture(u_prevTexture, v_uv);
+        }
 
         vec3 lineColor = mix(vec3(0.8, 0.0, 0.0), vec3(0.0, 0.0, 0.8), (1.0 + cos(u_time)) / 2.0);
 
-        int startPointIdx = 0;
-
-        // Most points have already been drawn onto the the texture. We only need to start drawing
-        // from the provided index
-        if (u_usePrevTexture) {
-            color = texture(u_prevTexture, v_uv);
-            // if (color.a < 1.0) {
-            //     color = vec4(0.0, 1.0, 0.0, color.a);
-            // }
-            startPointIdx = u_startPointIdx;
-        }
-
-        float dist = distanceToLine(uv, startPointIdx);
+        float dist = distanceToLine(uv);
         if (dist < u_circleRadius) {
             float alpha = smoothstep(u_circleRadius, u_circleRadius - 2.0, dist);
             // float alpha = 1.0 - (dist / u_circleRadius);
@@ -263,7 +252,7 @@ const pointTexture = gl.createTexture();
 gl.bindTexture(gl.TEXTURE_2D, pointTexture);
 gl.texImage2D(gl.TEXTURE_2D, 0,
     gl.RG32F,               // 2-component (x, y) float format
-    16384,                  // Width
+    8192,                   // Width
     1,                      // Height (single row)
     0,                      // Border
     gl.RG,                  // Format
@@ -313,12 +302,12 @@ function renderToTexture() {
     gl.bindTexture(gl.TEXTURE_2D, pointTexture);
 
     // Store the points to render in a texture
-    const pointsFloatArray = new Float32Array(points.slice(numPointsRendered).flat());
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, numPointsRendered, 0, pointsFloatArray.length / 2, 1, gl.RG, gl.FLOAT, pointsFloatArray);
+    const pointsFloatArray = new Float32Array(points.flat());
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, pointsFloatArray.length / 2, 1, gl.RG, gl.FLOAT, pointsFloatArray);
     gl.uniform1i(uPointTexture, 1);
     // We need to subtract 1 from the start index because drawing the next line segment will require re-using the
     // previously added point
-    gl.uniform1i(uStartPointIdx, Math.max(0, numPointsRendered - 1));
+    // gl.uniform1i(uStartPointIdx, Math.max(0, numPointsRendered - 1));
     // console.log("Drawing " + pointsFloatArray.length / 2 + " points starting at idx " + Math.max(0, numPointsRendered - 1));
 
     numPointsRendered = points.length;
@@ -356,15 +345,15 @@ function renderToScreen() {
 // Main render loop
 function render() {
     if (redraw || !renderToTextureFlag) {
-        if (renderFromTextureFlag) {
-            // When rendering from a texture, we only need to process a few points at a time
-            numCalculations += (points.length - numPointsRendered) * canvas.height * canvas.width;
-        } else {
-            // Otherwise, we need to process all points
-            numCalculations += points.length * canvas.height * canvas.width;
-        }
 
         renderToTexture();
+
+        if (renderFromTextureFlag && points.length > 0) {
+            // Spice removes the given range of items from the array
+            // We remove all but the last point to leave as the starting point for the next line segment
+            points.splice(0, points.length - 1);
+        }
+        numCalculations += points.length * canvas.height * canvas.width;
         redraw = false;
     }
     renderToScreen();
