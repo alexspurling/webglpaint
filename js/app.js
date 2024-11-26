@@ -38,6 +38,16 @@ const fragmentShaderSource = `#version 300 es
     uniform int u_startPointIdx;
     uniform float u_time;
 
+    vec4 normalBlend(vec4 color1, vec4 color2) {
+        float alpha = 1.0 - (1.0 - color1.a) * (1.0 - color2.a);
+
+        float r = (color1.r * color1.a + color2.r * color2.a * (1.0 - color1.a)) / alpha;
+        float g = (color1.g * color1.a + color2.g * color2.a * (1.0 - color1.a)) / alpha;
+        float b = (color1.b * color1.a + color2.b * color2.a * (1.0 - color1.a)) / alpha;
+
+        return vec4(r, g, b, alpha);
+    }
+
     float distanceToLineSegment(vec2 uv, vec2 linePoint1, vec2 linePoint2) {
         vec2 line = linePoint2 - linePoint1;
         vec2 perp = normalize(vec2(-line.y, line.x));
@@ -76,7 +86,7 @@ const fragmentShaderSource = `#version 300 es
         vec4 color = vec4(0.0); // Default background color
         vec2 uv = v_uv * u_resolution; // Convert to pixel coordinates
 
-        vec3 lineColor = mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), (1.0 + cos(u_time)) / 2.0);
+        vec3 lineColor = mix(vec3(0.8, 0.0, 0.0), vec3(0.0, 0.0, 0.8), (1.0 + cos(u_time)) / 2.0);
 
         int startPointIdx = 0;
 
@@ -84,19 +94,23 @@ const fragmentShaderSource = `#version 300 es
         // from the provided index
         if (u_usePrevTexture) {
             color = texture(u_prevTexture, v_uv);
+            // if (color.a < 1.0) {
+            //     color = vec4(0.0, 1.0, 0.0, color.a);
+            // }
             startPointIdx = u_startPointIdx;
         }
 
         float dist = distanceToLine(uv, startPointIdx);
         if (dist < u_circleRadius) {
-            // float alpha = smoothstep(u_circleRadius, u_circleRadius - 1.0, dist);
+            float alpha = smoothstep(u_circleRadius, u_circleRadius - 2.0, dist);
             // float alpha = 1.0 - (dist / u_circleRadius);
-            float alpha = 1.0 - (dist - u_circleRadius + 1.0) / 1.0; // Simple linear anti-aliasing function
-            // color = vec4(0.2, 0.4, 1.0, alpha);
+            // float alpha = 1.0 - (dist - u_circleRadius + 1.0) / 1.0; // Simple linear anti-aliasing function
+            color = normalBlend(vec4(lineColor, alpha), color);
+            // color = vec4(lineColor, alpha);
 
-            vec3 blendedRGB = mix(color.rgb, vec3(0.2, 0.4, 1.0), alpha);
-            float blendedAlpha = alpha + color.a * (1.0 - alpha);
-            color = vec4(lineColor, alpha);
+            // vec3 blendedRGB = mix(color.rgb, lineColor, alpha);
+            // float blendedAlpha = alpha + color.a * (1.0 - alpha);
+            // color = vec4(lineColor, blendedAlpha);
         }
         // Distance field as a gradient
         // color = vec4(mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), dist / 100.0), 1.0);
@@ -249,7 +263,7 @@ const pointTexture = gl.createTexture();
 gl.bindTexture(gl.TEXTURE_2D, pointTexture);
 gl.texImage2D(gl.TEXTURE_2D, 0,
     gl.RG32F,               // 2-component (x, y) float format
-    4096,                   // Width
+    16384,                  // Width
     1,                      // Height (single row)
     0,                      // Border
     gl.RG,                  // Format
@@ -324,8 +338,8 @@ function renderToTexture() {
 // Update the renderToScreen function to always use the current read texture
 function renderToScreen() {
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(backgroundColor[0], backgroundColor[1], backgroundColor[2], backgroundColor[3]);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    // gl.clearColor(backgroundColor[0], backgroundColor[1], backgroundColor[2], backgroundColor[3]);
+    // gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.useProgram(displayProgram);
 
@@ -342,8 +356,15 @@ function renderToScreen() {
 // Main render loop
 function render() {
     if (redraw || !renderToTextureFlag) {
+        if (renderFromTextureFlag) {
+            // When rendering from a texture, we only need to process a few points at a time
+            numCalculations += (points.length - numPointsRendered) * canvas.height * canvas.width;
+        } else {
+            // Otherwise, we need to process all points
+            numCalculations += points.length * canvas.height * canvas.width;
+        }
+
         renderToTexture();
-        numCalculations += points.length * canvas.height * canvas.width;
         redraw = false;
     }
     renderToScreen();
