@@ -74,9 +74,10 @@ const fragmentShaderSource = `#version 300 es
 
         float dist = distanceToLine();
         if (dist < u_circleRadius) {
-            float alpha = smoothstep(u_circleRadius, u_circleRadius - 2.0, dist);
+            // float alpha = smoothstep(u_circleRadius, u_circleRadius - 1.0, dist);
             // float alpha = 1.0 - (dist / u_circleRadius);
-            color = vec4(0.8, 0.9, 1.0, alpha);
+            float alpha = 1.0 - (dist - u_circleRadius + 1.0) / 1.0; // Simple linear anti-aliasing function
+            color = vec4(0.2, 0.4, 1.0, alpha);
         }
         // Distance field as a gradient
         // color = vec4(mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), dist / 100.0), 1.0);
@@ -242,8 +243,8 @@ function renderToTexture() {
     // Bind the framebuffer for writing
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[writeIndex]);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    // gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue
-    gl.clearColor(1.0, 1.0, 1.0, 1.0);
+    gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue - make sure to change in the renderToScreen function
+    // gl.clearColor(1.0, 1.0, 1.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     // Use the circle program for rendering
@@ -264,6 +265,7 @@ function renderToTexture() {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, pointTexture);
 
+    // Store the points to render in a texture
     const pointsFloatArray = new Float32Array(points.slice(pointsRendered).flat());
     gl.texSubImage2D(gl.TEXTURE_2D, 0, pointsRendered / 2, 0, pointsFloatArray.length / 2, 1, gl.RG, gl.FLOAT, pointsFloatArray);
     gl.uniform1i(uPointTexture, 1);
@@ -283,7 +285,8 @@ function renderToTexture() {
 // Update the renderToScreen function to always use the current read texture
 function renderToScreen() {
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue - make sure to change in the renderToTexture function
+    // gl.clearColor(1.0, 1.0, 1.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.useProgram(displayProgram);
