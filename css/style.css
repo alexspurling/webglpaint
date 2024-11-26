@@ -18,6 +18,11 @@
   pointer-events: none;
 }
 
+button {
+    margin-top: 16px;
+    font-size: medium;
+}
+
 body {
   background: #F0F0F0;
 }

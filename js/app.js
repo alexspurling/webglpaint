@@ -171,6 +171,7 @@ const uDisplayTexture = gl.getUniformLocation(displayProgram, "u_displayTexture"
 
 let frames = 0;
 let lastFpsTime = Date.now();
+let numCalculations = 0;
 
 function renderFps() {
     let curTime = Date.now();
@@ -180,7 +181,9 @@ function renderFps() {
         textCanvasCtx.font = "12px Verdana";
         textCanvasCtx.fillText("FPS: " + frames, 10, 20);
         textCanvasCtx.fillText("Points: " + points.length, 10, 40);
+        textCanvasCtx.fillText("Calculations per second: " + numCalculations, 10, 60);
         frames = 0;
+        numCalculations = 0;
     }
     frames += 1;
 }
@@ -196,6 +199,8 @@ let pointsRendered = 0;
 let newPoint = [400, 500];
 let redraw = true;
 let showSDF = false;
+let renderToTextureFlag = false;
+let backgroundColor = [0.85, 0.9, 1.0, 1.0]; // Light blue
 
 // Create two textures
 const textures = [];
@@ -215,6 +220,7 @@ for (let i = 0; i < 2; i++) {
     framebuffers.push(framebuffer);
 }
 
+// Texture used to pass point data to the shader - not sure if an array buffer is better?
 const pointTexture = gl.createTexture();
 gl.bindTexture(gl.TEXTURE_2D, pointTexture);
 gl.texImage2D(gl.TEXTURE_2D, 0,
@@ -243,8 +249,7 @@ function renderToTexture() {
     // Bind the framebuffer for writing
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[writeIndex]);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue - make sure to change in the renderToScreen function
-    // gl.clearColor(1.0, 1.0, 1.0, 1.0);
+    gl.clearColor(backgroundColor[0], backgroundColor[1], backgroundColor[2], backgroundColor[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     // Use the circle program for rendering
@@ -258,7 +263,7 @@ function renderToTexture() {
     // gl.uniform2f(uPoints, points.flat());
     gl.uniform2f(uNewPoint, newPoint[0], newPoint[1]);
     gl.uniform1i(uNumPoints, points.length);
-    gl.uniform1f(uCircleRadius, 15.0);
+    gl.uniform1f(uCircleRadius, 10.0);
     gl.uniform2f(uResolution, canvas.width, canvas.height);
     gl.uniform1i(uShowSDF, showSDF);
 
@@ -285,8 +290,7 @@ function renderToTexture() {
 // Update the renderToScreen function to always use the current read texture
 function renderToScreen() {
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.85, 0.9, 1.0, 1.0); // Light blue - make sure to change in the renderToTexture function
-    // gl.clearColor(1.0, 1.0, 1.0, 1.0);
+    gl.clearColor(backgroundColor[0], backgroundColor[1], backgroundColor[2], backgroundColor[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.useProgram(displayProgram);
@@ -305,7 +309,8 @@ function renderToScreen() {
 function render() {
     if (redraw) {
         renderToTexture();
-        redraw = true;
+        numCalculations += points.length * canvas.height * canvas.width;
+        redraw = false;
     }
     renderToScreen();
     renderFps();
@@ -338,6 +343,16 @@ canvas.addEventListener("mousedown", (e) => {
 
 function toggleShowSDF() {
     showSDF = !showSDF;
+    redraw = true;
+};
+
+function toggleRenderToTexture() {
+    renderToTextureFlag = !renderToTextureFlag;
+};
+
+function changeBackground() {
+    backgroundColor = [Math.random(), Math.random(), Math.random(), 1.0];
+    redraw = true;
 };
 
 render();
