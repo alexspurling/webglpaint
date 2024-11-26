@@ -307,7 +307,7 @@ function renderToScreen() {
 
 // Main render loop
 function render() {
-    if (redraw) {
+    if (redraw || !renderToTextureFlag) {
         renderToTexture();
         numCalculations += points.length * canvas.height * canvas.width;
         redraw = false;
@@ -348,6 +348,10 @@ function toggleShowSDF() {
 
 function toggleRenderToTexture() {
     renderToTextureFlag = !renderToTextureFlag;
+};
+
+function toggleRenderFromTexture() {
+    renderFromTextureFlag = !renderFromTextureFlag;
 };
 
 function changeBackground() {

@@ -29,11 +29,20 @@
         <canvas id="textCanvas" width="350" height="100"></canvas>
     </div>
     <br>
-    <input type="checkbox" id="showSDF" autocomplete="off" onchange="toggleShowSDF()"><label for="showSDF">Show SDF</label>
-    &nbsp;
     <input type="checkbox" id="renderToTexture" autocomplete="off" onchange="toggleRenderToTexture()"><label for="renderToTexture">Render to texture</label>
+    &nbsp;
+    <input type="checkbox" id="renderFromTexture" autocomplete="off" onchange="toggleRenderFromTexture()"><label for="renderFromTexture">Render from texture</label>
+    &nbsp;
+    <input type="checkbox" id="showSDF" autocomplete="off" onchange="toggleShowSDF()"><label for="showSDF">Show SDF</label>
     <br>
     <button id="changeBackground" value="Hello" onclick="changeBackground()">Change background</button>
+    <br>
+    <p>
+        Explanation: The line is drawn by calculating the shortest distance from every pixel to every line segment. When you add more segments this requires
+        hundreds of millions of calculations per frame. To speed this up, you can store the result in a texture so that the calculation only needs to be
+        done when making changes to the line. To speed things up even further, we can re-use that texture while drawing so we only need to draw the most recent
+        line segment at any one time.
+    </p>
 </div>
 
 <script src="js/app.js"></script>
